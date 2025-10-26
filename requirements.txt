@@ -1,0 +1,21 @@
+# Core deep learning framework
+torch>=2.1.0                 # PyTorch with GPU support if available
+
+# Hugging Face Transformers & Tokenizers
+transformers>=4.40.0         # Pretrained models, tokenization utilities
+tokenizers>=0.14.0           # Fast tokenizer backend
+
+# Data handling
+numpy>=1.27.0                # Arrays, math operations
+pandas>=2.1.0                # Optional: easier data manipulation
+datasets>=2.13.0             # Efficient dataset loading for NLP tasks
+
+# Utilities
+tqdm>=4.66.0                 # Progress bars for loops and training
+matplotlib>=3.8.0            # For plotting loss curves, attention, etc.
+einops>=0.6.0                # Tensor manipulation for attention layers
+
+# Optional but highly recommended
+accelerate>=0.23.0           # Mixed precision & multi-GPU support
+sentencepiece>=0.1.99         # For some tokenizers (if using T5 or GPT-J style tokenizers)
+# regex>=2025.10.0              # Text preprocessing and tokenizer support
