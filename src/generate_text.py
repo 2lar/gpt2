@@ -1,179 +1,140 @@
+import os
 import torch
 import torch.nn.functional as F
-import tiktoken
-from config import GPTConfig
+import argparse
+from transformers import GPT2TokenizerFast
 from model import GPT
-import os
-import requests
-from tqdm import tqdm
+from config import GPTConfig
 
-# --- Configuration & Setup ---
+# --- CLI args ---
+parser = argparse.ArgumentParser(description="Generate text with custom GPT-2 implementation")
+parser.add_argument("--source", choices=["pretrained", "local"], default="pretrained", help="Weight source")
+parser.add_argument("--model", choices=["gpt2", "gpt2-medium", "gpt2-large", "gpt2-xl"], default="gpt2", help="Model size / config")
+parser.add_argument("--ckpt", type=str, default=None, help="Path to local state_dict (.pt) when --source=local")
+parser.add_argument("--weights", type=str, default="data/gpt2_weights.pt", help="Path to HF-format weights when --source=pretrained")
+parser.add_argument("--prompt", type=str, default="The three laws of robotics are:")
+parser.add_argument("--max_new_tokens", type=int, default=50)
+parser.add_argument("--temperature", type=float, default=0.9)
+parser.add_argument("--top_k", type=int, default=None)
+parser.add_argument("--top_p", type=float, default=0.95)
+parser.add_argument("--greedy", action="store_true", help="Use greedy decoding (overrides sampling flags)")
+args, _ = parser.parse_known_args()
+
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Using device: {device}")
 
-# Use the 'gpt2' configuration to match the weights we are loading
-config = GPTConfig() 
-model = GPT(config)
+weights_path = None if args.weights in (None, '', 'auto') else args.weights
 
-# --- 1. Load Pre-trained Weights ---
-
-# The weight mapping process is complex, but this utility function handles 
-# downloading the weights and mapping them to your model's parameters.
-
-def load_pretrained_weights(model, model_type='gpt2'):
-    """Fetches and loads the official pre-trained GPT-2 weights from the Hugging Face Hub."""
-    print(f"\n--- Loading official '{model_type}' weights... ---")
-    
-    # 1. Download the state dict from the Hugging Face Hub
-    if model_type == 'gpt2':
-        # URL for the official GPT-2 small weights (400MB)
-        remote_url = "https://huggingface.co/gpt2/resolve/main/pytorch_model.bin"
-        local_file = "gpt2_weights.pt"
+# --- Build/Load model ---
+if args.source == "pretrained":
+    if weights_path is None:
+        model = GPT.from_pretrained(args.model).to(device).eval()
     else:
-        # Other models (like gpt2-medium) would need different URLs
-        raise ValueError(f"Unsupported model type: {model_type}")
+        if not os.path.exists(weights_path):
+            raise SystemExit(f"Weights file not found: {weights_path}. Use README instructions to download/save GPT-2 weights.")
+        model = GPT.from_pretrained(args.model, weights_path=weights_path).to(device).eval()
+else:
+    config_args = {
+        'gpt2':         dict(n_layer=12, n_head=12, n_embd=768),
+        'gpt2-medium':  dict(n_layer=24, n_head=16, n_embd=1024),
+        'gpt2-large':   dict(n_layer=36, n_head=20, n_embd=1280),
+        'gpt2-xl':      dict(n_layer=48, n_head=25, n_embd=1600),
+    }[args.model]
+    config_args['vocab_size'] = 50257
+    config_args['block_size'] = 1024
+    model = GPT(GPTConfig(**config_args)).to(device).eval()
+    if not args.ckpt:
+        raise SystemExit("--ckpt is required when --source=local")
+    print(f"Loading local checkpoint: {args.ckpt}")
+    state = torch.load(args.ckpt, map_location="cpu")
+    model.load_state_dict(state, strict=True)
 
-    if not os.path.exists(local_file):
-        print(f"Downloading weights from {remote_url} to {local_file}...")
-        try:
-            response = requests.get(remote_url, stream=True)
-            response.raise_for_status() # Check for bad responses
-            total_size = int(response.headers.get('content-length', 0))
-            
-            with open(local_file, 'wb') as f, tqdm(
-                desc=local_file,
-                total=total_size,
-                unit='iB',
-                unit_scale=True,
-                unit_divisor=1024,
-            ) as bar:
-                for chunk in response.iter_content(chunk_size=1024):
-                    size = f.write(chunk)
-                    bar.update(size)
-            print("Download complete.")
-        except Exception as e:
-            print(f"Error downloading weights: {e}")
-            return False
+# --- Tokenizer ---
+tokenizer = GPT2TokenizerFast.from_pretrained('gpt2')
+eos_id = tokenizer.eos_token_id
 
-    state_dict = torch.load(local_file, map_location='cpu')
-
-    # 2. Map the official weights to your model's parameter names
-    # This dictionary maps names from the official Hugging Face state_dict to your model's state_dict
-    state_dict_hf = state_dict 
-    state_dict_local = model.state_dict()
-    
-    # Define weight mapping
-    # This is a fixed mapping logic required for GPT architecture
-    transposed = ['attn.c_attn.weight', 'attn.c_proj.weight', 'mlp.c_fc.weight', 'mlp.c_proj.weight']
-    
-    # Create the new state dict for your model
-    new_state_dict = {}
-    for k, v in state_dict_hf.items():
-        if 'attn.bias' in k: # Skip the unnecessary causal mask (we handle it in the model)
-            continue
-        
-        # Rename keys to match your custom model structure (e.g., Block.ln_1 to Block.norm1)
-        k = k.replace('.attn', '.attention')
-        k = k.replace('h.', 'blocks.')
-        k = k.replace('ln_f', 'norm_f')
-        k = k.replace('ln_1', 'norm1')
-        k = k.replace('ln_2', 'norm2')
-        k = k.replace('c_attn', 'c_attn') # Stays the same in your implementation
-        k = k.replace('c_proj', 'c_proj')
-        k = k.replace('c_fc', 'c_fc')
-        
-        # Transpose weights that were defined as (input_dim, output_dim) in HF, 
-        # but are expected as (output_dim, input_dim) in our Linear layers (since we use nn.Linear)
-        if any(k.endswith(w) for w in transposed) and 'weight' in k:
-             v = v.T
-        
-        new_state_dict[k] = v
-
-    # Load the mapped state dictionary
-    # The 'strict=False' is important because we skip the positional embedding which is generated
-    # by the model and the `attn.bias` which is generated by the attention layer.
-    model.load_state_dict(new_state_dict, strict=False)
-    print(f"Weights successfully loaded! Model is now a functional GPT-2.")
-    return True
-
-# Load the weights
-if not load_pretrained_weights(model, model_type='gpt2'):
-    exit()
-
-# Move model to device
-model.to(device)
-model.eval()
-
-# --- 2. Tokenizer Setup ---
-# GPT models use the tiktoken library (Byte Pair Encoding)
-tokenizer = tiktoken.get_encoding("gpt2") 
-
-# --- 3. Generation Function ---
+# --- Generation Function ---
 @torch.no_grad()
-def generate(model, prompt_text, max_new_tokens=100, temperature=0.8, top_k=50):
-    """
-    Generates text from a given prompt using nucleus/top-k sampling.
-    """
+def generate(
+    model,
+    prompt_text,
+    max_new_tokens=100,
+    temperature=1.0,
+    top_k=None,
+    top_p=None,
+    deterministic=False,
+):
     model.eval()
-    
-    # 1. Encode the prompt text
-    context_ids = tokenizer.encode(prompt_text)
-    x = torch.tensor(context_ids, dtype=torch.long, device=device).unsqueeze(0) # (1, T)
+
+    x = tokenizer.encode(prompt_text, return_tensors='pt').to(device)
 
     print(f"\n[PROMPT] {prompt_text}")
     print("=" * (len(prompt_text) + 12))
 
-    # 2. Main generation loop
+    if deterministic:
+        print("MODE: Greedy Decoding (Deterministic)")
+    elif top_p is not None:
+        print(f"MODE: Nucleus (Top-p={top_p}) Sampling (Random)")
+    elif top_k is not None:
+        print(f"MODE: Top-k ({top_k}) Sampling (Random)")
+    else:
+        print(f"MODE: Pure Temperature ({temperature}) Sampling (Random)")
+
     for _ in range(max_new_tokens):
-        # Crop context if it exceeds block size
-        x_cond = x if x.size(1) <= config.block_size else x[:, -config.block_size:]
-        
-        # Forward pass: get logits
-        logits, _ = model(x_cond) # (1, T, vocab_size)
-        
-        # Focus on the last token's logits
-        logits = logits[:, -1, :] / temperature # (1, vocab_size)
-        
-        # Apply top-k filtering
-        if top_k is not None:
-            v, _ = torch.topk(logits, top_k)
-            logits[logits < v[:, [-1]]] = -float('Inf')
-        
-        # Sample using softmax
-        probs = F.softmax(logits, dim=-1)
-        idx_next = torch.multinomial(probs, num_samples=1) # (1, 1)
+        block_size = getattr(model, 'config', None).block_size if hasattr(model, 'config') else 1024
+        x_cond = x if x.size(1) <= block_size else x[:, -block_size:]
 
-        # Append sampled index to the running sequence
-        x = torch.cat((x, idx_next), dim=1) # (1, T+1)
+        logits, _ = model(x_cond)
+        logits = logits[:, -1, :]
 
-        # Stop if we generate the special <|endoftext|> token (id 50256)
-        if idx_next.item() == tokenizer.eot_token:
+        if deterministic:
+            idx_next = torch.argmax(logits, dim=-1, keepdim=True)
+        else:
+            logits = logits / max(1e-6, temperature)
+
+            if top_k is not None:
+                k = min(top_k, logits.size(-1))
+                thresh = torch.topk(logits, k, dim=-1).values[..., -1, None]
+                logits[logits < thresh] = -float('inf')
+
+            if top_p is not None and top_p < 1.0:
+                probs = F.softmax(logits, dim=-1)
+                sorted_probs, sorted_indices = torch.sort(probs, descending=True)
+                cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
+                sorted_indices_to_remove = cumulative_probs > top_p
+                sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
+                sorted_indices_to_remove[..., 0] = False
+                remove_indices = sorted_indices[sorted_indices_to_remove]
+                logits[0, remove_indices] = -float('inf')
+
+            probs = F.softmax(logits, dim=-1)
+            idx_next = torch.multinomial(probs, num_samples=1)
+
+        x = torch.cat((x, idx_next), dim=1)
+
+        if idx_next.item() == eos_id:
             break
-    
-    # 3. Decode the full sequence and return
-    output_ids = x[0].tolist()
-    decoded_text = tokenizer.decode(output_ids)
-    print(decoded_text)
-    return decoded_text
 
-# --- 4. Run Generation ---
+    decoded = tokenizer.decode(x[0].tolist(), skip_special_tokens=True)
+    print(decoded)
+    return decoded
 
-# A simple prompt to test the model's knowledge
-initial_prompt = "Artificial intelligence will fundamentally change how we"
-
-generate(
-    model, 
-    prompt_text=initial_prompt,
-    max_new_tokens=100, 
-    temperature=0.8
-)
-
-# A more creative prompt
-creative_prompt = "The three laws of robotics are:"
-
-generate(
-    model, 
-    prompt_text=creative_prompt,
-    max_new_tokens=50, 
-    temperature=0.9
-)
+if __name__ == "__main__":
+    if args.greedy:
+        print("\n--- Greedy Decoding ---")
+        generate(
+            model,
+            prompt_text=args.prompt,
+            max_new_tokens=args.max_new_tokens,
+            deterministic=True,
+        )
+    else:
+        print("\n--- Sampling ---")
+        generate(
+            model,
+            prompt_text=args.prompt,
+            max_new_tokens=args.max_new_tokens,
+            temperature=args.temperature,
+            top_p=args.top_p,
+            top_k=args.top_k,
+        )

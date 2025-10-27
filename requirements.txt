@@ -19,3 +19,5 @@ einops>=0.6.0                # Tensor manipulation for attention layers
 accelerate>=0.23.0           # Mixed precision & multi-GPU support
 sentencepiece>=0.1.99         # For some tokenizers (if using T5 or GPT-J style tokenizers)
 # regex>=2025.10.0              # Text preprocessing and tokenizer support
+
+tiktoken>=0.4.0               # OpenAI's tokenization library for GPT models
