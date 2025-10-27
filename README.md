@@ -1,5 +1,10 @@
 # GPT-2 Reproduction Workspace
 
+Ensure that you also set up the local virtual environment properly, too.
+1. in the workspace run `python3 -m venv env`
+2. then to start the virtual environment run `source env/bin/activate`
+3. then you can run `pip install -r requirements.txt`
+
 If you keep `data/gpt2_weights.pt` in place, both commands default to it automatically.
 
 ## Project Layout
