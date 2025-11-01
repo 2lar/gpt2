@@ -5,7 +5,7 @@ import torch
 import torch.nn.functional as F
 from transformers import GPT2LMHeadModel, GPT2Config, GPT2TokenizerFast
 
-from model import GPT
+from gpt2.model import GPT
 
 
 def load_models(model_name: str, device: str, weights_path: str | None):

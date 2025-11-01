@@ -3,8 +3,8 @@ import torch
 import torch.nn.functional as F
 import argparse
 from transformers import GPT2TokenizerFast
-from model import GPT
-from config import GPTConfig
+from gpt2.model import GPT
+from gpt2.config import GPTConfig
 
 # --- CLI args ---
 parser = argparse.ArgumentParser(description="Generate text with custom GPT-2 implementation")
