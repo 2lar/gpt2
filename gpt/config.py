@@ -48,4 +48,27 @@ class GPTConfig:
 
     # Whether to use bias terms in Linear layers and LayerNorm
     # GPT-2 uses bias=True, but some modern models disable it
-    bias: bool = True       
+    bias: bool = True
+
+    # =========================================================================
+    # Modern Attention Parameters (for attention.py)
+    # =========================================================================
+
+    # Number of KV heads for Grouped-Query Attention (GQA)
+    # If n_kv_head == n_head: Standard Multi-Head Attention (MHA)
+    # If n_kv_head < n_head: Grouped-Query Attention (GQA)
+    # If n_kv_head == 1: Multi-Query Attention (MQA)
+    # Example: n_head=32, n_kv_head=8 → 4 Q-heads share each KV-head (60% memory savings)
+    # Used by: LLaMA 2/3 (n_kv_head=8), Mistral (n_kv_head=8)
+    n_kv_head: int = 12  # Default: same as n_head (standard MHA)
+
+    # Maximum position for RoPE precomputation
+    # Rotary embeddings can extrapolate beyond this, but precomputing is faster
+    # Modern models often use 2048, 4096, or even 32768
+    max_position_embeddings: int = 2048
+
+    # Sliding window size for sliding window attention (optional)
+    # Only relevant if using SlidingWindowAttention from attention_modern.py
+    # Set to None or very large value to disable sliding window
+    # Used by: Mistral (window_size=4096)
+    window_size: int = 4096

@@ -12,10 +12,10 @@ Main components:
 - GPT: Complete GPT-2 model with training utilities
 """
 
-from gpt2.config import GPTConfig
-from gpt2.attention import CausalSelfAttention
-from gpt2.block import Block, MLP
-from gpt2.model import GPT
+from gpt.config import GPTConfig
+from gpt.attention_gpt2 import CausalSelfAttention
+from gpt.block import Block, MLP
+from gpt.model import GPT
 
 __all__ = [
     "GPTConfig",

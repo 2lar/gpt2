@@ -20,8 +20,8 @@ import torch.nn as nn
 from torch.nn import functional as F
 
 # Import necessary components
-from gpt2.config import GPTConfig
-from gpt2.block import Block
+from gpt.config import GPTConfig
+from gpt.block import Block
 
 class GPT(nn.Module):
     """

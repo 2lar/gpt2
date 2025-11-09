@@ -11,8 +11,8 @@ The architecture follows the "pre-norm" formulation where LayerNorm is applied
 BEFORE the sub-layers (attention and MLP), which improves training stability.
 """
 import torch.nn as nn
-from gpt2.config import GPTConfig
-from gpt2.attention import CausalSelfAttention
+from gpt.config import GPTConfig
+from gpt.attention_gpt2 import CausalSelfAttention
 
 class MLP(nn.Module):
     """

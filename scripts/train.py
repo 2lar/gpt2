@@ -14,10 +14,10 @@ import torch
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 
-from gpt2.config import GPTConfig
-from gpt2.data import DataLoaderLite, LoaderConfig
-from gpt2.evaluation import get_most_likely_row
-from gpt2.model import GPT
+from gpt.config import GPTConfig
+from gpt.data import DataLoaderLite, LoaderConfig
+from gpt.evaluation import get_most_likely_row
+from gpt.model import GPT
 
 try:
     import tiktoken

@@ -14,7 +14,7 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
-from gpt2.config import GPTConfig
+from gpt.config import GPTConfig
 
 class CausalSelfAttention(nn.Module):
     """
@@ -24,6 +24,8 @@ class CausalSelfAttention(nn.Module):
     causal masking for autoregressive generation (GPT-style).
 
     The attention formula is: Attention(Q, K, V) = softmax(Q·K^T / sqrt(d_k)) · V
+    Including the dropuot, this becomes:
+        Attention(Q, K, V) = Dropout(softmax(Q·K^T / sqrt(d_k))) · V
 
     Where each token can only attend to previous tokens (causal/autoregressive).
     """
