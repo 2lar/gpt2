@@ -44,7 +44,7 @@ class LoaderConfig:
     process_rank: int
     world_size: int
     split: str
-    data_root: str = "edu_fineweb10B"
+    data_root: str = "shakespeare_data"
     master_process: bool = True
 
 

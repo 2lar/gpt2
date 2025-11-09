@@ -682,10 +682,10 @@ Complete training script with distributed data parallel support.
 ```python
 @dataclass
 class TrainingConfig:
-    data_root: str = "edu_fineweb10B"
-    total_batch_size: int = 524288      # ~0.5M tokens per update
-    micro_batch_size: int = 64          # Sequences per forward pass
-    seq_len: int = 1024                 # Tokens per sequence
+    data_root: str = "shakespeare_data"
+    total_batch_size: int = 32768       # Total tokens per update
+    micro_batch_size: int = 16          # Sequences per forward pass
+    seq_len: int = 256                  # Tokens per sequence
     max_lr: float = 6e-4                # Peak learning rate
     min_lr_ratio: float = 0.1           # min_lr = max_lr * 0.1
     warmup_steps: int = 715             # Linear warmup

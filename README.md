@@ -95,20 +95,24 @@ python scripts/generate.py \
 
 ### 3. Train from Scratch
 
+First, prepare a dataset:
+
+```bash
+# Quick test dataset (Shakespeare, ~1MB)
+python prepare_shakespeare.py
+```
+
+Then run training:
+
 ```bash
 # Single GPU training
-python scripts/train.py
+python -m scripts.train
 
 # Multi-GPU distributed training
 torchrun --standalone --nproc_per_node=8 scripts/train.py
 ```
 
-**Training configuration** (in `scripts/train.py`):
-- Total batch size: 524,288 tokens (~0.5M)
-- Micro batch size: 64 sequences × 1024 tokens
-- Learning rate: 6e-4 with cosine decay
-- Warmup: 715 steps
-- Weight decay: 0.1
+See [docs/train.md](docs/train.md) for complete training instructions.
 
 ## Architecture Overview
 
@@ -165,17 +169,15 @@ The codebase includes detailed comments explaining:
 
 ## Data Preparation
 
-To prepare training data from FineWeb-Edu:
+Prepare the Shakespeare test dataset:
 
 ```bash
-# Download and prepare fineweb.py from Karpathy's repo
-wget https://raw.githubusercontent.com/karpathy/build-nanogpt/master/fineweb.py
-
-# Run data preparation (creates ~100 shards of tokenized data)
-python fineweb.py
+python prepare_shakespeare.py
 ```
 
-This creates the `edu_fineweb10B/` directory with training shards.
+This downloads tiny Shakespeare (~1MB text), tokenizes it, and creates training shards in `shakespeare_data/`.
+
+For custom datasets, see [docs/train.md](docs/train.md).
 
 ## Understanding the Code
 

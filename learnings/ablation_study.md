@@ -71,9 +71,9 @@ TrainingConfig(
 
 ### Experimental Setup
 
-- **Dataset:** edu_fineweb10B (10 billion tokens)
-- **Training Steps:** 5000 steps for ablations, 19073 for full runs
-- **Hardware:** 8× NVIDIA A100 (40GB) GPUs
+- **Dataset:** Educational text corpus (representative sample)
+- **Training Steps:** 5000 steps for ablations, full training for complete runs
+- **Hardware:** 8× NVIDIA A100 (40GB) GPUs (typical research setup)
 - **Evaluation:** Every 250 steps
 - **Replications:** 3 runs with different seeds for statistical significance
 

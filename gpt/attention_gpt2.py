@@ -93,6 +93,10 @@ class CausalSelfAttention(nn.Module):
         # This prevents the model from "cheating" by looking at future tokens
         attn_dropout = self.dropout_p if self.training else 0.0
         y = F.scaled_dot_product_attention(
+            # Inside of here there is the calculation of Q·K^T / sqrt(d_k) + mask
+            # the Q.matmul(K.transpose(-2, -1)) part computes the raw attention scores and is in shape of
+            #   (B, n_head, T, T)
+            # the dropout within this part is applied to the attention weights after softmax
             q, k, v,
             is_causal=True,  # Apply causal mask (lower triangular)
             dropout_p=attn_dropout

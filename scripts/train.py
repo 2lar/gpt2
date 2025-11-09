@@ -35,16 +35,16 @@ except (ModuleNotFoundError, ImportError):
 
 @dataclass
 class TrainingConfig:
-    data_root: str = "edu_fineweb10B"
-    total_batch_size: int = 524288
-    micro_batch_size: int = 64
-    seq_len: int = 1024
-    eval_interval: int = 250
-    eval_iters: int = 20
+    data_root: str = "shakespeare_data"  # Changed for quick testing
+    total_batch_size: int = 32768  # Reduced for small dataset (was 524288)
+    micro_batch_size: int = 16  # Reduced batch size (was 64)
+    seq_len: int = 256  # Shorter sequences for testing (was 1024)
+    eval_interval: int = 50  # More frequent eval (was 250)
+    eval_iters: int = 10  # Fewer eval iters (was 20)
     max_lr: float = 6e-4
     min_lr_ratio: float = 0.1
-    warmup_steps: int = 715
-    max_steps: int = 19073
+    warmup_steps: int = 100  # Shorter warmup (was 715)
+    max_steps: int = 1000  # Much shorter for testing (was 19073)
     log_dir: str = "log"
     compile: bool = False
     hellaswag_interval: int = 250
