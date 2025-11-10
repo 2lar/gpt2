@@ -39,6 +39,7 @@ gpt2/
 🔧 **Production Ready**: Supports distributed training, mixed precision, Flash Attention
 📊 **Evaluation**: HellaSwag benchmark and validation against HuggingFace models
 🎯 **Weight Loading**: Load pretrained GPT-2 weights from HuggingFace
+🎨 **LoRA Fine-Tuning**: Efficient fine-tuning on custom text with 8GB VRAM
 
 ## Installation
 
@@ -113,6 +114,28 @@ torchrun --standalone --nproc_per_node=8 scripts/train.py
 ```
 
 See [docs/train.md](docs/train.md) for complete training instructions.
+
+### 4. Fine-Tune on Your Own Text (LoRA)
+
+Quick and efficient fine-tuning using LoRA:
+
+```bash
+# Prepare your custom text
+python scripts/prepare_custom_text.py \
+  --input data/your_text.txt \
+  --output custom_data
+
+# Fine-tune with LoRA (5-10 minutes, 8GB VRAM)
+python -m scripts.finetune_lora \
+  --data custom_data \
+  --steps 500
+
+# Compare before/after
+python -m scripts.compare_outputs \
+  --lora lora_checkpoints/lora_final.pt
+```
+
+See [docs/lora_finetuning.md](docs/lora_finetuning.md) for the complete fine-tuning guide.
 
 ## Architecture Overview
 
