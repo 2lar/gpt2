@@ -42,13 +42,13 @@ class LoRAFineTuneConfig:
     lora_rank: int = 8
     lora_alpha: float = 16.0
 
-    # Training
+    # Training - this part is adjustable depending on VRAM and data size
     batch_size: int = 4  # Small batch for 8GB VRAM
     seq_len: int = 128  # Shorter sequences for limited data
     grad_accum_steps: int = 4  # Effective batch size = 4 * 4 = 16
     max_steps: int = 500
     eval_interval: int = 50
-    eval_iters: int = 10
+    eval_iters: int = 1  # ADJUSTED: Single validation batch (for tiny datasets)
 
     # Optimizer
     learning_rate: float = 3e-4  # Higher LR for LoRA (adapters learn faster)
@@ -150,6 +150,9 @@ def main():
         alpha=cfg.lora_alpha,
         target_modules=['c_attn']  # Apply to Q, K, V projections
     )
+
+    # Move LoRA parameters to device (they're created on CPU by default)
+    model.to(device)
 
     print(f"\nLoRA parameters: {lora_params_count/1e6:.2f}M")
     print(f"Trainable ratio: {lora_params_count/base_params*100:.2f}%")
