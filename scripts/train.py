@@ -43,44 +43,47 @@ class TrainingConfig:
     # Batch size configuration
     # total_batch_size = total tokens processed before weight update
     # This is split across: micro_batch_size × grad_accum_steps × num_gpus
-    total_batch_size: int = 32768  # Total tokens per optimizer step
-    micro_batch_size: int = 16     # Batch size per GPU forward pass (fits in memory)
-    seq_len: int = 256             # Sequence length (number of tokens per sequence)
+    total_batch_size: int = 32768  # Chosen to match GPT-2's token-per-step target so optimization dynamics resemble the paper.
+    micro_batch_size: int = 16     # Small enough to fit activations on consumer GPUs; grad accumulation rebuilds the large global batch.
+    seq_len: int = 256             # Short context keeps experiments cheap while still exercising positional modeling.
 
     # Evaluation configuration
-    eval_interval: int = 50   # Evaluate validation loss every N steps
-    eval_iters: int = 10      # Number of batches to average for validation loss
+    eval_interval: int = 50   # Frequent evals catch regressions quickly when iterating on ablations.
+    eval_iters: int = 10      # Averaging a few batches smooths noise without burning lots of tokens on validation.
 
     # Learning rate configuration
-    max_lr: float = 6e-4       # Peak learning rate (reached after warmup)
-    min_lr_ratio: float = 0.1  # Minimum LR as fraction of max (0.1 = 10% of max_lr)
-    warmup_steps: int = 100    # Linear warmup from 0 to max_lr over this many steps
+    max_lr: float = 6e-4       # Proven sweet spot for GPT-2-scale AdamW training; too high blows up, too low trains slowly.
+    min_lr_ratio: float = 0.1  # Ending at 10% of max preserves progress late in cosine decay instead of collapsing LR to zero.
+    warmup_steps: int = 100    # Short warmup prevents early gradient spikes while keeping ramp-up overhead minimal.
 
     # Training duration
-    max_steps: int = 1000  # Total number of training steps
+    max_steps: int = 1000  # Enough steps to see trends without the cost of a full epoch on the dataset.
 
     # Logging and checkpointing
-    log_dir: str = "log"  # Directory to save checkpoints and logs
+    log_dir: str = "log"  # Single place for metrics/checkpoints simplifies experiment bookkeeping.
 
     # Compilation (experimental PyTorch 2.0 feature)
-    compile: bool = False  # Whether to use torch.compile() for faster training
+    compile: bool = False  # Disabled by default; debugging compiled graphs is harder, so opt-in once runs are stable.
 
     # Evaluation benchmarks
-    hellaswag_interval: int = 250  # Run HellaSwag benchmark every N steps
+    hellaswag_interval: int = 250  # Expensive benchmark, so run sparsely to keep wall-clock reasonable.
 
     # Text generation sampling
-    sampling_interval: int = 250  # Generate sample text every N steps
-    sample_prompt: str = "Hello, I'm a language model,"  # Prompt for generation
-    sample_max_len: int = 32      # Maximum tokens to generate
-    sample_count: int = 4         # Number of samples to generate
+    sampling_interval: int = 250  # Text samples are qualitative checks; periodic snapshots avoid slowing the loop.
+    sample_prompt: str = "Hello, I'm a language model,"  # Neutral prompt that exposes general language ability.
+    sample_max_len: int = 32      # Short completions minimize time spent in slow autoregressive loops.
+    sample_count: int = 4         # Few samples balance diversity with logging verbosity.
 
     # Optimizer configuration
-    weight_decay: float = 0.1  # L2 regularization strength (applied to 2D params only)
+    weight_decay: float = 0.1  # Same decay OpenAI reported; discourages overfitting without hampering large batches.
 
 
 def setup_distributed() -> Tuple[bool, int, int, int, str, str, bool]:
     """
     Setup distributed training (multi-GPU) if environment variables are set.
+
+    Uses the modern torch.accelerator API (PyTorch 2.8+) for device-agnostic code.
+    Falls back to torch.cuda for older PyTorch versions.
 
     Returns:
         ddp: Whether DDP is enabled
@@ -95,12 +98,18 @@ def setup_distributed() -> Tuple[bool, int, int, int, str, str, bool]:
     # torchrun sets RANK environment variable
     ddp = int(os.environ.get('RANK', -1)) != -1
 
+    # Check if modern accelerator API is available (PyTorch 2.8+)
+    has_accelerator_api = hasattr(torch, 'accelerator')
+
     if ddp:
         # Multi-GPU distributed training mode
-        assert torch.cuda.is_available(), "DDP run requires CUDA"
+        if has_accelerator_api:
+            assert torch.accelerator.is_available(), "DDP run requires an accelerator (GPU)"
+        else:
+            assert torch.cuda.is_available(), "DDP run requires CUDA"
 
         # Initialize process group for communication between GPUs
-        # 'nccl' backend is optimized for NVIDIA GPUs
+        # 'nccl' backend is optimized for NVIDIA GPUs (also supports AMD ROCm)
         dist.init_process_group(backend='nccl')
 
         # Get distributed training info from environment (set by torchrun)
@@ -108,9 +117,15 @@ def setup_distributed() -> Tuple[bool, int, int, int, str, str, bool]:
         ddp_local_rank = int(os.environ['LOCAL_RANK'])  # Local GPU index (0, 1, 2, ...)
         ddp_world_size = int(os.environ['WORLD_SIZE'])  # Total number of GPUs
 
-        # Each process gets its own GPU
-        device = f'cuda:{ddp_local_rank}'
-        torch.cuda.set_device(device)
+        # Each process gets its own GPU based on LOCAL_RANK
+        # Modern API (PyTorch 2.8+): torch.accelerator.set_device_index()
+        # Legacy API: torch.cuda.set_device()
+        if has_accelerator_api:
+            device = f'{torch.accelerator.current_accelerator()}:{ddp_local_rank}'
+            torch.accelerator.set_device_index(ddp_local_rank)
+        else:
+            device = f'cuda:{ddp_local_rank}'
+            torch.cuda.set_device(device)
 
         # Only rank 0 should print logs and save checkpoints
         master_process = ddp_rank == 0
@@ -122,11 +137,18 @@ def setup_distributed() -> Tuple[bool, int, int, int, str, str, bool]:
         master_process = True
 
         # Auto-detect best available device
-        device = "cpu"
-        if torch.cuda.is_available():
-            device = "cuda"
-        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-            device = "mps"  # Apple Silicon GPU
+        # Modern API: Use torch.accelerator if available
+        if has_accelerator_api and torch.accelerator.is_available():
+            # PyTorch 2.8+ device-agnostic API
+            device = torch.accelerator.current_accelerator()
+        else:
+            # Legacy device detection (works on all PyTorch versions)
+            device = "cpu"
+            if torch.cuda.is_available():
+                device = "cuda"
+            elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                device = "mps"  # Apple Silicon GPU
+
         print(f"using device: {device}")
 
     # Device type is used for autocast (mixed precision)
@@ -266,8 +288,13 @@ def train(model_cfg: Optional[GPTConfig] = None, train_cfg: Optional[TrainingCon
     # ========================================================================
     # 4. Create Model
     # ========================================================================
-    # Use TensorFloat32 for faster matmuls on Ampere+ GPUs
-    # This uses lower precision for intermediate computations (faster, negligible accuracy loss)
+    # GLOBAL SETTING: Use TensorFloat32 (TF32) for faster matmuls on Ampere+ GPUs
+    # This affects ALL float32 matrix multiplications in the entire program
+    # - 'highest' = full float32 (slowest, most accurate)
+    # - 'high'    = TF32 (8x faster on Ampere+, negligible accuracy loss)
+    # - 'medium'  = more aggressive (fastest, slight accuracy loss)
+    # Only works on: RTX 30xx/40xx, A100, H100, etc. (ignored on older GPUs)
+    # Does NOT affect bfloat16/float16 ops (we use those in autocast anyway)
     torch.set_float32_matmul_precision('high')
 
     # Create GPT model with random weights (training from scratch)
@@ -276,11 +303,13 @@ def train(model_cfg: Optional[GPTConfig] = None, train_cfg: Optional[TrainingCon
 
     # Optional: Compile model with PyTorch 2.0 for faster training
     if train_cfg.compile:
+        print("compiling model with torch.compile() (this may take a while)...")
         model = torch.compile(model)
 
     # Wrap in DistributedDataParallel for multi-GPU training
     # DDP synchronizes gradients across GPUs and averages them
     if ddp:
+        print("wrapping model in DistributedDataParallel...")
         model = DDP(model, device_ids=[ddp_local_rank])
 
     # Get unwrapped model (needed for configure_optimizers)
@@ -320,6 +349,7 @@ def train(model_cfg: Optional[GPTConfig] = None, train_cfg: Optional[TrainingCon
         t0 = time.time()
         last_step = step == train_cfg.max_steps - 1
 
+        # Validation monitoring - run on validation set periodically
         if step % train_cfg.eval_interval == 0 or last_step:
             model.eval()
             val_loader.reset()
@@ -348,6 +378,7 @@ def train(model_cfg: Optional[GPTConfig] = None, train_cfg: Optional[TrainingCon
                     }
                     torch.save(checkpoint, checkpoint_path)
 
+        # HellaSwag evaluation - run full benchmark periodically
         if (step % train_cfg.hellaswag_interval == 0 or last_step) and hellaswag_enabled and not train_cfg.compile:
             num_correct_norm = 0
             num_total = 0
@@ -376,6 +407,7 @@ def train(model_cfg: Optional[GPTConfig] = None, train_cfg: Optional[TrainingCon
                 with open(log_file, "a") as f:
                     f.write(f"{step} hella {acc_norm:.4f}\n")
 
+        # Text generation sampling - generate samples periodically
         if ((step > 0 and step % train_cfg.sampling_interval == 0) or last_step) and not train_cfg.compile:
             model.eval()
             tokens = enc.encode(train_cfg.sample_prompt)
