@@ -4,11 +4,25 @@ Quick reference for all scripts in the reorganized structure.
 
 ## Training Scripts (`scripts/training/`)
 
-### Train from Scratch
+### Train from Scratch (Modular Version - Recommended for Production)
 ```bash
 python -m scripts.training.train
 ```
-Train a GPT-2 model from random initialization.
+Professional modular training with separated utilities.
+- Clean, maintainable code
+- Reusable components
+- Best practices demonstrated
+
+### Train from Scratch (One-File Version - Best for Learning)
+```bash
+python -m scripts.training.onefile_train
+```
+Complete training in one file for educational purposes.
+- Everything in one place
+- Easy to understand flow
+- Great for learning
+
+**📚 See [docs/training_architecture.md](docs/training_architecture.md) for detailed comparison**
 
 ### LoRA Fine-Tuning
 ```bash
