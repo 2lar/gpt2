@@ -11,25 +11,37 @@ If you keep `data/gpt2_weights.pt` in place, both commands default to it automat
 
 ```
 gpt2/
-├── gpt2/                      # Core model package
-│   ├── __init__.py           # Package exports
-│   ├── config.py             # Model configuration
-│   ├── attention.py          # Multi-head self-attention
-│   ├── block.py              # Transformer decoder block
-│   ├── model.py              # Complete GPT-2 model
-│   ├── data.py               # Data loading utilities
-│   └── evaluation.py         # Evaluation helpers
-├── scripts/                   # Executable scripts
-│   ├── train.py              # Training script
-│   ├── generate.py           # Text generation
-│   ├── validate.py           # Model validation
-│   └── eval_hellaswag.py     # HellaSwag benchmark
-├── examples/                  # Reference implementations
-│   └── karpathy_original.py  # Original single-file version
-├── data/                      # Data directory
-│   └── gpt2_weights.pt       # Cached pretrained weights
-├── notebooks/                 # Jupyter notebooks for exploration
-└── requirements.txt           # Python dependencies
+├── gpt/                         # Core model package
+│   ├── __init__.py             # Package exports
+│   ├── config.py               # Model configuration
+│   ├── attention.py            # Multi-head self-attention
+│   ├── block.py                # Transformer decoder block
+│   ├── model.py                # Complete GPT-2 model
+│   ├── data.py                 # Data loading utilities
+│   ├── evaluation.py           # Evaluation helpers
+│   └── lora.py                 # LoRA (Low-Rank Adaptation) implementation
+├── scripts/                     # Executable scripts (organized by purpose)
+│   ├── training/               # Training scripts
+│   │   ├── train.py            # Train from scratch
+│   │   └── finetune_lora.py    # LoRA fine-tuning
+│   ├── data/                   # Data preparation
+│   │   ├── prepare_custom_text.py    # Convert text to tokens
+│   │   ├── prepare_shakespeare.py    # Shakespeare dataset
+│   │   └── validate.py               # Validate against HuggingFace
+│   ├── evaluation/             # Model evaluation
+│   │   ├── eval_hellaswag.py   # HellaSwag benchmark
+│   │   └── compare_outputs.py  # Compare before/after fine-tuning
+│   └── inference/              # Text generation
+│       └── generate.py         # Generate text from model
+├── docs/                        # Documentation
+│   ├── lora_finetuning.md      # Complete LoRA guide
+│   └── understanding_batch_sizes.md  # Deep dive on batch sizes
+├── examples/                    # Reference implementations
+│   └── karpathy_original.py    # Original single-file version
+├── data/                        # Data directory
+│   └── gpt2_weights.pt         # Cached pretrained weights
+├── notebooks/                   # Jupyter notebooks for exploration
+└── requirements.txt             # Python dependencies
 ```
 
 ## Features
@@ -59,7 +71,7 @@ pip install -r requirements.txt
 Compare the implementation against the official GPT-2:
 
 ```bash
-python scripts/validate.py \
+python -m scripts.data.validate \
   --model gpt2 \
   --weights data/gpt2_weights.pt \
   --prompt "The quick brown fox" \
@@ -76,7 +88,7 @@ This will verify:
 
 ```bash
 # Greedy decoding (deterministic)
-python scripts/generate.py \
+python -m scripts.inference.generate \
   --source pretrained \
   --model gpt2 \
   --weights data/gpt2_weights.pt \
@@ -85,7 +97,7 @@ python scripts/generate.py \
   --greedy
 
 # Sampling with temperature and nucleus sampling
-python scripts/generate.py \
+python -m scripts.inference.generate \
   --source pretrained \
   --model gpt2 \
   --prompt "Once upon a time" \
@@ -100,20 +112,18 @@ First, prepare a dataset:
 
 ```bash
 # Quick test dataset (Shakespeare, ~1MB)
-python prepare_shakespeare.py
+python -m scripts.data.prepare_shakespeare
 ```
 
 Then run training:
 
 ```bash
 # Single GPU training
-python -m scripts.train
+python -m scripts.training.train
 
 # Multi-GPU distributed training
-torchrun --standalone --nproc_per_node=8 scripts/train.py
+torchrun --standalone --nproc_per_node=8 scripts/training/train.py
 ```
-
-See [docs/train.md](docs/train.md) for complete training instructions.
 
 ### 4. Fine-Tune on Your Own Text (LoRA)
 
@@ -121,17 +131,17 @@ Quick and efficient fine-tuning using LoRA:
 
 ```bash
 # Prepare your custom text
-python scripts/prepare_custom_text.py \
+python -m scripts.data.prepare_custom_text \
   --input data/your_text.txt \
   --output custom_data
 
 # Fine-tune with LoRA (5-10 minutes, 8GB VRAM)
-python -m scripts.finetune_lora \
+python -m scripts.training.finetune_lora \
   --data custom_data \
   --steps 500
 
 # Compare before/after
-python -m scripts.compare_outputs \
+python -m scripts.evaluation.compare_outputs \
   --lora lora_checkpoints/lora_final.pt
 ```
 
