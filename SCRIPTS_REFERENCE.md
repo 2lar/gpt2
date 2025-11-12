@@ -100,6 +100,71 @@ python -m scripts.training.finetune_lora \
 
 ---
 
+### QLoRA Fine-Tuning (Quantized LoRA)
+
+**Command:**
+```bash
+# Basic usage (works on 4GB VRAM!)
+python -m scripts.training.finetune_qlora \
+  --data brainrot_data \
+  --steps 500
+
+# With larger model (gpt2-medium, 350M params)
+python -m scripts.training.finetune_qlora \
+  --data brainrot_data \
+  --model gpt2-medium \
+  --steps 1000
+
+# Full options
+python -m scripts.training.finetune_qlora \
+  --data brainrot_data \
+  --model gpt2 \
+  --weights data/gpt2_weights.pt \
+  --steps 500 \
+  --rank 8 \
+  --lr 3e-4 \
+  --block-size 64 \
+  --output qlora_checkpoints
+```
+
+**Arguments:**
+- `--data`: Data directory (default: `brainrot_data`)
+- `--model`: Model size (default: `gpt2`, options: gpt2-medium, gpt2-large, gpt2-xl)
+- `--weights`: Path to pretrained weights (default: `data/gpt2_weights.pt`)
+- `--steps`: Training steps (default: `500`)
+- `--rank`: LoRA rank (default: `8`, higher = more params)
+- `--lr`: Learning rate (default: `3e-4`)
+- `--block-size`: Quantization block size (default: `64`, smaller = more accurate, larger = more memory efficient)
+- `--output`: Output directory (default: `qlora_checkpoints`)
+
+**What it does:**
+- Fine-tunes pretrained GPT-2 using QLoRA (4-bit quantized base + LoRA adapters)
+- **8x memory savings** compared to regular LoRA
+- Base model: 124M params @ 4-bit = ~62 MB (vs 496 MB)
+- LoRA adapters: ~0.3M params @ bfloat16 = ~0.6 MB
+- Total: ~63 MB (can run on 4GB VRAM!)
+
+**Key difference from regular LoRA:**
+- Regular LoRA: Base model in float32 (496 MB) + LoRA adapters
+- QLoRA: Base model in 4-bit NF4 (62 MB) + LoRA adapters
+- Trade-off: Slightly slower due to dequantization overhead
+
+**Outputs:**
+- Checkpoints: `qlora_checkpoints/qlora_step_XXXXX.pt` (every 50 steps)
+- Final weights: `qlora_checkpoints/qlora_final.pt`
+
+**Common issues:**
+- **CPU inference warning**: QLoRA is designed for GPU. CPU will be very slow due to dequantization.
+- **Block size**: Smaller block sizes (e.g., 32) give better accuracy but use more memory for scales
+- **Missing data**: First run `prepare_custom_text.py` to create tokenized data
+
+**When to use QLoRA vs LoRA:**
+- Use QLoRA when: Limited VRAM (< 8GB), want to fine-tune larger models
+- Use LoRA when: Have enough VRAM, want faster training/inference
+- Both produce similar quality results!
+
+---
+
 ## Data Preparation (`scripts/data/`)
 
 ### Prepare Custom Text
@@ -427,6 +492,94 @@ python -m scripts.inference.generate_lora \
   - Default training uses rank=8, alpha=16.0
 - **Weights path**: If weights are in `data/weights/`, use `--weights data/weights/gpt2_weights.pt`
 - **FileNotFoundError**: Check both `--weights` and `--lora` paths are correct
+
+---
+
+### Generate Text with QLoRA
+
+**Command:**
+```bash
+# Basic usage
+python -m scripts.inference.generate_qlora \
+  --qlora qlora_checkpoints/qlora_final.pt \
+  --prompt "Once upon a time"
+
+# With custom weights path
+python -m scripts.inference.generate_qlora \
+  --weights data/weights/gpt2_weights.pt \
+  --qlora qlora_checkpoints/qlora_final.pt \
+  --prompt "Your custom prompt here" \
+  --max_new_tokens 200
+
+# With different QLoRA checkpoint
+python -m scripts.inference.generate_qlora \
+  --qlora qlora_checkpoints/qlora_step_00500.pt \
+  --prompt "Hello world" \
+  --max_new_tokens 100
+
+# Greedy decoding
+python -m scripts.inference.generate_qlora \
+  --qlora qlora_checkpoints/qlora_final.pt \
+  --prompt "To be or not to be" \
+  --greedy
+
+# Custom sampling parameters
+python -m scripts.inference.generate_qlora \
+  --qlora qlora_checkpoints/qlora_final.pt \
+  --prompt "In the future" \
+  --max_new_tokens 150 \
+  --temperature 0.8 \
+  --top_k 40 \
+  --top_p 0.9
+```
+
+**Arguments:**
+
+**QLoRA Configuration (REQUIRED):**
+- `--qlora`: Path to QLoRA weights checkpoint (REQUIRED)
+- `--rank`: LoRA rank (default: `8`, **must match training**)
+- `--alpha`: LoRA alpha (default: `16.0`, **must match training**)
+- `--block-size`: Quantization block size (default: `64`, **must match training**)
+
+**Model:**
+- `--model`: Base model size (default: `gpt2`, options: gpt2-medium, gpt2-large, gpt2-xl)
+- `--weights`: Path to base model weights (default: `data/gpt2_weights.pt`)
+
+**Generation:**
+- `--prompt`: Text prompt (default: `"Once upon a time"`)
+- `--max_new_tokens`: Number of tokens to generate (default: `100`)
+
+**Sampling:**
+- `--greedy`: Use greedy decoding (deterministic)
+- `--temperature`: Sampling temperature (default: `0.9`, higher = more random)
+- `--top_k`: Top-k sampling (default: `None`, example: `40`)
+- `--top_p`: Nucleus sampling (default: `0.95`, range: 0-1)
+
+**What it does:**
+1. Loads base GPT-2 model
+2. Quantizes base model to 4-bit NF4
+3. Applies LoRA adapters with specified rank/alpha
+4. Loads fine-tuned QLoRA weights
+5. Generates text (with dequantization overhead)
+
+**Key differences from generate_lora.py:**
+- Base model is quantized to 4-bit (8x memory savings)
+- Slightly slower due to dequantization during forward pass
+- Otherwise identical usage and quality
+
+**Common issues:**
+- **CPU warning**: QLoRA inference on CPU is VERY slow (dequantization overhead)
+  - Consider using regular LoRA for CPU inference
+- **Parameter mismatch**: `--rank`, `--alpha`, and `--block-size` must ALL match training
+  - Check your training command or [finetune_qlora.py](scripts/training/finetune_qlora.py) defaults
+  - Default training: rank=8, alpha=16.0, block_size=64
+- **Weights path**: If weights are in `data/weights/`, use `--weights data/weights/gpt2_weights.pt`
+- **FileNotFoundError**: Check both `--weights` and `--qlora` paths are correct
+
+**Performance comparison:**
+- Memory: ~63 MB (QLoRA) vs ~496 MB (regular LoRA)
+- Speed: ~10-20% slower due to dequantization
+- Quality: Nearly identical to regular LoRA
 
 ---
 
