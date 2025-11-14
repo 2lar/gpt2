@@ -51,6 +51,89 @@ python -m scripts.training.onefile_train
 
 ---
 
+### Train from Scratch with FSDP2 (Multi-GPU, Memory-Efficient)
+
+**Command:**
+```bash
+# Single node, 4 GPUs
+torchrun --nproc_per_node=4 scripts/training/train_fsdp.py
+
+# Single node, all available GPUs
+torchrun --nproc_per_node=auto scripts/training/train_fsdp.py
+
+# With custom arguments
+torchrun --nproc_per_node=4 scripts/training/train_fsdp.py \
+  --batch-size 8 \
+  --seq-len 1024 \
+  --max-steps 10000 \
+  --lr 6e-4
+
+# Multi-node (2 nodes, 4 GPUs each)
+# Node 0:
+torchrun --nproc_per_node=4 --nnodes=2 --node_rank=0 \
+  --master_addr=192.168.1.1 --master_port=29500 \
+  scripts/training/train_fsdp.py
+
+# Node 1:
+torchrun --nproc_per_node=4 --nnodes=2 --node_rank=1 \
+  --master_addr=192.168.1.1 --master_port=29500 \
+  scripts/training/train_fsdp.py
+```
+
+**Arguments:**
+- `--data-root`: Path to training data (default: `data/fineweb10B`)
+- `--n-layer`: Number of transformer layers (default: `12`)
+- `--n-head`: Number of attention heads (default: `12`)
+- `--n-embd`: Embedding dimension (default: `768`)
+- `--batch-size`: Batch size per GPU (default: `8`)
+- `--seq-len`: Sequence length (default: `1024`)
+- `--grad-accum`: Gradient accumulation steps (default: `4`)
+- `--max-steps`: Maximum training steps (default: `10000`)
+- `--lr`: Learning rate (default: `6e-4`)
+- `--no-amp`: Disable mixed precision training
+- `--cpu-offload`: Offload parameters to CPU (saves GPU memory, slower)
+- `--log-interval`: Log every N steps (default: `10`)
+- `--eval-interval`: Evaluate every N steps (default: `500`)
+- `--save-interval`: Save checkpoint every N steps (default: `1000`)
+- `--output-dir`: Output directory for checkpoints (default: `log_fsdp`)
+
+**What it does:**
+- Trains GPT-2 from scratch using **FSDP2 (Fully Sharded Data Parallel v2)**
+- **Shards model, gradients, and optimizer states across GPUs** for massive memory savings
+- Enables training models that don't fit on a single GPU
+- Uses DTensor (distributed tensors) for automatic parameter sharding
+- **Memory reduction: ~4x compared to DDP, ~8x with mixed precision**
+
+**Key features:**
+- **FSDP2 sharding**: Each GPU holds only 1/N of model parameters
+- **Automatic communication**: All-gather params when needed, then free
+- **Per-layer sharding**: Fine-grained FSDP units for better performance
+- **Mixed precision**: bfloat16 parameters, fp32 gradient reduction
+- **Educational comments**: Heavily documented for learning
+
+**Memory savings example (GPT-2 124M on 4 GPUs):**
+- DDP: 2 GB per GPU (full model + optimizer on each GPU)
+- FSDP2 (fp32): ~500 MB per GPU (sharded model + optimizer)
+- FSDP2 (bf16): ~370 MB per GPU (sharded + mixed precision)
+
+**Outputs:**
+- Checkpoints: `log_fsdp/checkpoint_XXXXXX.pt` (every 1000 steps)
+- Logs: Printed to stdout (only from rank 0)
+
+**Common issues:**
+- **"NCCL error"**: Check that each process uses a different GPU with `torch.cuda.set_device(local_rank)`
+- **"Expected all tensors to be on the same device"**: Move model to correct device BEFORE calling `fully_shard()`
+- **Still OOM**: Reduce `--batch-size`, enable `--cpu-offload`, or use activation checkpointing
+- **Slow training**: Check interconnect (should be NVLink/InfiniBand), reduce sharding granularity
+
+**When to use FSDP2 vs DDP:**
+- Use FSDP2 when: Model doesn't fit on 1 GPU, want memory efficiency, training very large models
+- Use DDP when: Model fits on 1 GPU, want simplicity, debugging
+
+**📚 See [docs/fsdp2_explained.md](docs/fsdp2_explained.md) for comprehensive FSDP2 guide**
+
+---
+
 ### LoRA Fine-Tuning
 
 **Command:**
