@@ -248,6 +248,102 @@ python -m scripts.training.finetune_qlora \
 
 ---
 
+### DPO Training (Direct Preference Optimization) - **FROM SCRATCH**
+
+**Command:**
+```bash
+# First, create sample preference data
+python -m scripts.data.create_preference_data --output preference_data.jsonl
+
+# Then train with DPO
+python -m scripts.training.train_dpo \
+  --data preference_data.jsonl \
+  --steps 1000
+
+# Full options
+python -m scripts.training.train_dpo \
+  --model gpt2 \
+  --weights data/gpt2_weights.pt \
+  --data preference_data.jsonl \
+  --beta 0.1 \
+  --lr 5e-7 \
+  --steps 1000 \
+  --batch-size 4 \
+  --grad-accum 4 \
+  --output dpo_checkpoints
+```
+
+**Arguments:**
+- `--model`: Model size (default: `gpt2`)
+- `--weights`: Path to pretrained weights (default: `data/gpt2_weights.pt`)
+- `--data`: Path to preference data JSONL file (REQUIRED)
+- `--beta`: DPO temperature (default: `0.1`, higher = stronger preference for chosen)
+- `--lr`: Learning rate (default: `5e-7`, very low for stability)
+- `--steps`: Training steps (default: `1000`)
+- `--batch-size`: Batch size (default: `4`)
+- `--grad-accum`: Gradient accumulation steps (default: `4`)
+- `--val-split`: Validation split fraction (default: `0.1`)
+- `--log-interval`: Log every N steps (default: `10`)
+- `--eval-interval`: Evaluate every N steps (default: `100`)
+- `--save-interval`: Save checkpoint every N steps (default: `500`)
+- `--output`: Output directory (default: `dpo_checkpoints`)
+
+**What it does:**
+- Aligns pretrained GPT-2 to human preferences using **DPO (Direct Preference Optimization)**
+- **Implemented completely from scratch** (no HuggingFace TRL library!)
+- Trains on preference pairs: (prompt, chosen_response, rejected_response)
+- Increases probability of chosen responses, decreases rejected responses
+- Stays close to reference model to prevent drift
+
+**DPO Algorithm:**
+1. Creates frozen reference model (copy of initial model)
+2. For each preference pair:
+   - Compute log P(chosen|prompt) and log P(rejected|prompt)
+   - Compare to reference model probabilities
+   - Optimize to prefer chosen over rejected
+3. No reward model needed! No RL needed!
+
+**Data format** (JSONL):
+```json
+{"prompt": "Explain X", "chosen": "Detailed answer...", "rejected": "Short answer"}
+{"prompt": "What is Y?", "chosen": "Good response...", "rejected": "Bad response"}
+```
+
+**Key features:**
+- ✅ **Pure PyTorch implementation** (educational!)
+- ✅ Complete DPO algorithm from scratch
+- ✅ Detailed comments explaining every step
+- ✅ Reference model handling (frozen copy)
+- ✅ Implicit reward computation
+- ✅ Validation loop with metrics
+- ✅ ~600 lines of heavily commented code
+
+**Outputs:**
+- Checkpoints: `dpo_checkpoints/dpo_step_XXXXXX.pt` (every 500 steps)
+- Final model: `dpo_checkpoints/dpo_final.pt`
+- Logs: Training loss, reward margin, accuracy
+
+**Common issues:**
+- **"Preference data not found"**: First run `create_preference_data.py` to generate sample data
+- **High loss**: Increase `--beta` (stronger preference) or decrease `--lr` (more stable)
+- **Model diverges**: Decrease `--lr` (try 1e-7) or decrease `--beta`
+- **OOM**: Reduce `--batch-size` or increase `--grad-accum`
+
+**When to use DPO vs SFT vs LoRA:**
+- **SFT (Supervised Fine-Tuning)**: Teaching format/style (instruction tuning)
+- **LoRA**: Parameter-efficient SFT (same task, less memory)
+- **DPO**: Aligning to preferences (safety, helpfulness, quality)
+- Typical pipeline: Pretrain → SFT → DPO
+
+**DPO vs RLHF:**
+- RLHF: Train reward model + Use PPO (complex, 2 phases)
+- DPO: Train directly on preferences (simple, 1 phase)
+- DPO has largely replaced RLHF for open models (simpler, works just as well)
+
+**📚 See [docs/dpo_explained.md](docs/dpo_explained.md) for deep dive into DPO algorithm**
+
+---
+
 ## Data Preparation (`scripts/data/`)
 
 ### Prepare Custom Text
