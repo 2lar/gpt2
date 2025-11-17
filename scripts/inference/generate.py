@@ -18,6 +18,7 @@ parser.add_argument("--temperature", type=float, default=0.9)
 parser.add_argument("--top_k", type=int, default=None)
 parser.add_argument("--top_p", type=float, default=0.95)
 parser.add_argument("--greedy", action="store_true", help="Use greedy decoding (overrides sampling flags)")
+parser.add_argument("--no-cache", action="store_true", help="Disable KV caching (slower but uses less memory)")
 args, _ = parser.parse_known_args()
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -63,7 +64,24 @@ def generate(
     top_k=None,
     top_p=None,
     deterministic=False,
+    use_cache=True,
 ):
+    """
+    Generate text using the model with optional KV caching for efficiency.
+
+    Args:
+        model: The GPT model to use for generation
+        prompt_text: Initial text prompt
+        max_new_tokens: Maximum number of tokens to generate
+        temperature: Sampling temperature (higher = more random)
+        top_k: Keep only top k tokens by probability
+        top_p: Keep top tokens with cumulative probability <= top_p (nucleus sampling)
+        deterministic: If True, use greedy decoding
+        use_cache: If True, use KV caching for faster generation (default: True)
+
+    Returns:
+        Generated text as a string
+    """
     model.eval()
 
     x = tokenizer.encode(prompt_text, return_tensors='pt').to(device)
@@ -80,11 +98,36 @@ def generate(
     else:
         print(f"MODE: Pure Temperature ({temperature}) Sampling (Random)")
 
-    for _ in range(max_new_tokens):
-        block_size = getattr(model, 'config', None).block_size if hasattr(model, 'config') else 1024
-        x_cond = x if x.size(1) <= block_size else x[:, -block_size:]
+    if use_cache:
+        print("OPTIMIZATION: KV Cache Enabled ✓")
+    else:
+        print("OPTIMIZATION: KV Cache Disabled")
 
-        logits, _ = model(x_cond)
+    # KV cache logic
+    kv_caches = None  # Will store KV caches from all layers
+    position_offset = 0  # Tracks position in the sequence
+
+    for i in range(max_new_tokens):
+        block_size = getattr(model, 'config', None).block_size if hasattr(model, 'config') else 1024
+
+        if use_cache:
+            if i == 0:
+                # First iteration: process full prompt
+                x_cond = x if x.size(1) <= block_size else x[:, -block_size:]
+                logits, kv_caches = model(x_cond, use_cache=True, position_offset=0)
+                position_offset = x_cond.size(1)
+            else:
+                # Subsequent iterations: only process the new token!
+                # This is where the speedup comes from - we only pass 1 token
+                x_cond = x[:, -1:]  # Only the last token! [B, 1]
+                logits, kv_caches = model(x_cond, kv_caches=kv_caches,
+                                         use_cache=True, position_offset=position_offset)
+                position_offset += 1
+        else:
+            # No caching: process all tokens every time (slow but works)
+            x_cond = x if x.size(1) <= block_size else x[:, -block_size:]
+            logits, _ = model(x_cond)
+
         logits = logits[:, -1, :]
 
         if deterministic:
@@ -120,6 +163,8 @@ def generate(
     return decoded
 
 if __name__ == "__main__":
+    use_cache = not args.no_cache  # Default: cache enabled
+
     if args.greedy:
         print("\n--- Greedy Decoding ---")
         generate(
@@ -127,6 +172,7 @@ if __name__ == "__main__":
             prompt_text=args.prompt,
             max_new_tokens=args.max_new_tokens,
             deterministic=True,
+            use_cache=use_cache,
         )
     else:
         print("\n--- Sampling ---")
@@ -137,4 +183,5 @@ if __name__ == "__main__":
             temperature=args.temperature,
             top_p=args.top_p,
             top_k=args.top_k,
+            use_cache=use_cache,
         )

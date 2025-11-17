@@ -128,7 +128,8 @@ class GPT(nn.Module):
             # Embedding weights initialized with same std as linear layers
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def forward(self, idx: torch.Tensor, targets: torch.Tensor = None):
+    def forward(self, idx: torch.Tensor, targets: torch.Tensor = None,
+                kv_caches: list = None, use_cache: bool = False, position_offset: int = 0):
         """
         Forward pass: convert token IDs to next-token predictions.
 
@@ -144,10 +145,19 @@ class GPT(nn.Module):
                  B = batch size, T = sequence length
             targets: Target token indices for training, shape (B, T)
                      If provided, computes and returns loss
+            kv_caches: Optional list of KV caches from previous iterations (one per block)
+                      Each cache is a tuple (k, v) of tensors
+            use_cache: Whether to return updated KV caches for generation
+            position_offset: Offset for position embeddings when using cache
+                            (e.g., if cache has 10 tokens, offset=10)
 
         Returns:
-            logits: Predicted scores for next token, shape (B, T, vocab_size)
-            loss: Cross-entropy loss if targets provided, else None
+            If use_cache=False:
+                logits: Predicted scores for next token, shape (B, T, vocab_size)
+                loss: Cross-entropy loss if targets provided, else None
+            If use_cache=True:
+                logits: Predicted scores for next token, shape (B, T, vocab_size)
+                new_kv_caches: List of updated KV caches (one per block)
         """
         B, T = idx.size()
 
@@ -160,8 +170,10 @@ class GPT(nn.Module):
         token_embeddings = self.transformer.wte(idx)  # (B, T, n_embd)
 
         # Position embeddings: add learned positional information
-        # Create position indices [0, 1, 2, ..., T-1] on the same device as input
-        position_indices = torch.arange(0, T, dtype=torch.long, device=idx.device)
+        # When using cache, offset positions to account for cached tokens
+        # e.g., if cache has 10 tokens, new token should have position 10, not 0
+        position_indices = torch.arange(position_offset, position_offset + T,
+                                       dtype=torch.long, device=idx.device)
         position_embeddings = self.transformer.wpe(position_indices)  # (T, n_embd)
 
         # Combine token and position information (broadcasts position across batch)
@@ -171,8 +183,18 @@ class GPT(nn.Module):
 
         # Step 2: Pass through transformer blocks
         # Each block refines the representation using attention + MLP
-        for block in self.transformer.h:
-            x = block(x)  # (B, T, n_embd) -> (B, T, n_embd)
+        # If using cache, collect new caches from each block
+        new_kv_caches = [] if use_cache else None
+
+        for i, block in enumerate(self.transformer.h):
+            # Get the cache for this specific block (if available)
+            block_cache = kv_caches[i] if kv_caches is not None else None
+
+            if use_cache:
+                x, new_cache = block(x, kv_cache=block_cache, use_cache=True)
+                new_kv_caches.append(new_cache)
+            else:
+                x = block(x, kv_cache=block_cache, use_cache=False)
 
         # Step 3: Final layer normalization
         # Stabilizes the representations before the output projection
@@ -183,15 +205,18 @@ class GPT(nn.Module):
         logits = self.lm_head(x)  # (B, T, vocab_size)
 
         # Step 5: Compute loss if training targets provided
-        loss = None
         if targets is not None:
             # Flatten batch and sequence dimensions for cross-entropy
             # This treats each position as an independent classification problem
             # logits: (B, T, vocab_size) -> (B*T, vocab_size)
             # targets: (B, T) -> (B*T,)
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
+            return logits, loss
 
-        return logits, loss
+        # Return based on whether we're using cache
+        if use_cache:
+            return logits, new_kv_caches
+        return logits, None
 
     def configure_optimizers(self, weight_decay: float, learning_rate: float,
                               device_type: str, *, master_process: bool = True) -> torch.optim.Optimizer:

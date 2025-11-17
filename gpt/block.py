@@ -12,6 +12,7 @@ BEFORE the sub-layers (attention and MLP), which improves training stability.
 """
 import torch.nn as nn
 from gpt.config import GPTConfig
+from gpt.attention import GroupedQueryAttention
 from gpt.attention_gpt2 import CausalSelfAttention
 
 class MLP(nn.Module):
@@ -99,7 +100,7 @@ class Block(nn.Module):
         # Processes each token's representation independently
         self.mlp = MLP(config)
 
-    def forward(self, x):
+    def forward(self, x, kv_cache=None, use_cache=False):
         """
         Forward pass through the transformer block.
 
@@ -111,16 +112,34 @@ class Block(nn.Module):
 
         Args:
             x: (B, T, n_embd) input tensor
+            kv_cache: Optional tuple (k, v) of cached keys and values from previous iterations
+            use_cache: Whether to return the updated KV cache
 
         Returns:
-            (B, T, n_embd) output tensor with same shape
+            If use_cache=False: (B, T, n_embd) output tensor
+            If use_cache=True: tuple of (output tensor, new_kv_cache)
         """
         # Attention block with residual connection
         # "Communication" phase: tokens look at previous tokens and aggregate info
-        x = x + self.attn(self.ln_1(x))
+
+        # Both GroupedQueryAttention and CausalSelfAttention support KV caching
+        if use_cache:
+            attn_out, new_kv_cache = self.attn(self.ln_1(x), kv_cache=kv_cache, use_cache=True)
+            x = x + attn_out
+        else:
+            attn_result = self.attn(self.ln_1(x), kv_cache=kv_cache, use_cache=False)
+            # Handle both single return value and tuple return
+            if isinstance(attn_result, tuple):
+                attn_out, _ = attn_result
+            else:
+                attn_out = attn_result
+            x = x + attn_out
+            new_kv_cache = None
 
         # MLP block with residual connection
         # "Computation" phase: process the information independently for each token
         x = x + self.mlp(self.ln_2(x))
 
+        if use_cache:
+            return x, new_kv_cache
         return x
